@@ -13,6 +13,7 @@ mkdir build && cd build && cmake .. && cmake --build .
 You can run the following on your trained model, or using our pretrained model. Click the following link to download the pretrained model.
 
 * [Chinese model trained on AIShell](http://mobvoi-speech-public.ufile.ucloud.cn/public/wenet/aishell/20210221_unified_transformer_server.tar.gz)
+* [Model trained on AISHELL-2](http://mobvoi-speech-public.ufile.ucloud.cn/public/wenet/aishell2/20210327_unified_transformer_exp_server.tar.gz)
 * [TODO: add English model trained on Librispeech](link)
 
 ## Run offline ASR demo
@@ -100,5 +101,15 @@ the Docker container. The image contains the latest release, a shell script and
 several waves to run the demo. Just run it as follows:
 
 ``` sh
-docker run -it mobvoiwenet/wenet:v0.1.0 bash /home/run.sh
+docker run --rm -it mobvoiwenet/wenet:v0.1.0 bash
 ```
+
+Or build the Dockerfile yourself, and run it by:
+
+``` sh
+DOCKER_BUILDKIT=1 docker build --no-cache -t wenet:latest .
+docker run --rm -it wenet bash
+cmake --build /home/wenet/runtime/server/x86/build
+```
+
+The pretrained model folder is located at `/home`, and the binary is located at `/home/wenet/runtime/server/x86/build`. Run it as previous mentioned.

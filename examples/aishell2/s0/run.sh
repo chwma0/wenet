@@ -5,14 +5,14 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6"
 # The NCCL_SOCKET_IFNAME variable specifies which IP interface to use for nccl
 # communication. More details can be found in
 # https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html
 # export NCCL_SOCKET_IFNAME=ens4f1
 export NCCL_DEBUG=INFO
 stage=0 # start from 0 if you need to start from data preparation
-stop_stage=5
+stop_stage=6
 # The num of nodes or machines used for multi-machine training
 # Default 1 for single machine/node
 # NFS will be needed if you want run multi-machine training
@@ -21,9 +21,11 @@ num_nodes=1
 # The first node/machine sets node_rank 0, the second one sets node_rank 1
 # the third one set node_rank 2, and so on. Default 0
 node_rank=0
-# data
-data=/export/expts4/chaoyang/
-data_url=www.openslr.org/resources/33
+
+# modify this to your AISHELL-2 data path
+trn_set=/ssd/nfs06/open_source_data/AISHELL-2/iOS/data
+dev_set=/ssd/nfs06/open_source_data/AISHELL-DEV-TEST-SET/iOS/dev
+tst_set=/ssd/nfs06/open_source_data/AISHELL-DEV-TEST-SET/iOS/test
 
 nj=16
 feat_dir=raw_wav
@@ -35,9 +37,9 @@ train_set=train
 # 2. conf/train_conformer.yaml: Standard conformer
 # 3. conf/train_unified_conformer.yaml: Unified dynamic chunk causal conformer
 # 4. conf/train_unified_transformer.yaml: Unified dynamic chunk transformer
-train_config=conf/train_conformer.yaml
+train_config=conf/train_unified_transformer.yaml
 cmvn=true
-dir=exp/conformer
+dir=exp/transformer
 checkpoint=
 
 # use average_checkpoint will get better result
@@ -48,23 +50,19 @@ decode_modes="ctc_greedy_search ctc_prefix_beam_search attention attention_resco
 
 . tools/parse_options.sh || exit 1;
 
-if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
-    echo "stage -1: Data Download"
-    local/download_and_untar.sh ${data} ${data_url} data_aishell
-    local/download_and_untar.sh ${data} ${data_url} resource_aishell
-fi
-
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     # Data preparation
-    local/aishell_data_prep.sh ${data}/data_aishell/wav ${data}/data_aishell/transcript
+    local/prepare_data.sh ${trn_set} data/local/${train_set} data/${train_set} || exit 1;
+    local/prepare_data.sh ${dev_set} data/local/dev data/dev || exit 1;
+    local/prepare_data.sh ${tst_set} data/local/test data/test || exit 1;
 fi
-
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     # remove the space between the text labels for Mandarin dataset
-    for x in train dev test; do
+    for x in ${train_set} dev test; do
         cp data/${x}/text data/${x}/text.org
-        paste -d " " <(cut -f 1 -d" " data/${x}/text.org) <(cut -f 2- -d" " data/${x}/text.org | tr -d " ") \
+        paste -d " " <(cut -f 1 data/${x}/text.org) <(cut -f 2- data/${x}/text.org \
+             | tr 'a-z' 'A-Z' | sed 's/\([A-Z]\) \([A-Z]\)/\1▁\2/g' | tr -d " ") \
             > data/${x}/text
         rm data/${x}/text.org
     done
@@ -86,7 +84,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     mkdir -p $(dirname $dict)
     echo "<blank> 0" > ${dict} # 0 will be used for "blank" in CTC
     echo "<unk> 1" >> ${dict} # <unk> must be 1
-    tools/text2token.py -s 1 -n 1 data/train/text | cut -f 2- -d" " | tr " " "\n" \
+    tools/text2token.py -s 1 -n 1 data/${train_set}/text | cut -f 2- -d" " | tr " " "\n" \
         | sort | uniq | grep -a -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${dict}
     num_token=$(cat $dict | wc -l)
     echo "<sos/eos> $num_token" >> $dict # <eos>
@@ -138,10 +136,10 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     for ((i = 0; i < $num_gpus; ++i)); do
     {
         gpu_id=$(echo $CUDA_VISIBLE_DEVICES | cut -d',' -f$[$i+1])
-        # Rank of each gpu/process used for knowing whether it is
-        # the master of a worker.
-        rank=`expr $node_rank \* $num_gpus + $i`
-        python wenet/bin/train.py --gpu $gpu_id \
+    # Rank of each gpu/process used for knowing whether it is
+    # the master of a worker.
+    rank=`expr $node_rank \* $num_gpus + $i`
+    python wenet/bin/train.py --gpu $gpu_id \
             --config $train_config \
             --train_data $feat_dir/$train_set/format.data \
             --cv_data $feat_dir/dev/format.data \
@@ -152,8 +150,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --ddp.rank $rank \
             --ddp.dist_backend $dist_backend \
             --num_workers 2 \
-            $cmvn_opts \
-            --pin_memory
+            $cmvn_opts
     } &
     done
     wait
@@ -207,18 +204,3 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         --output_quant_file $dir/final_quant.zip
 fi
 
-if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
-    # Test model, please specify the model you want to use by --checkpoint
-        # alignment input
-        ali_format=$feat_dir/test/format.data
-        # alignment output
-        ali_result=$dir/ali
-        python wenet/bin/alignment.py --gpu -1 \
-            --config $dir/train.yaml \
-            --input_file $ali_format \
-            --checkpoint $checkpoint \
-            --batch_size 1 \
-            --dict $dict \
-            --result_file $ali_result \
-
-fi

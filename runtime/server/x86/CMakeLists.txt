@@ -64,6 +64,9 @@ FetchContent_MakeAvailable(gflags glog googletest boost libtorch)
 include_directories(${boost_SOURCE_DIR})
 find_package(Torch REQUIRED PATHS ${libtorch_SOURCE_DIR} NO_DEFAULT_PATH)
 if(MSVC)
+  execute_process(COMMAND bootstrap.bat WORKING_DIRECTORY ${boost_SOURCE_DIR})
+  execute_process(COMMAND b2.exe WORKING_DIRECTORY ${boost_SOURCE_DIR})
+  link_directories(${boost_SOURCE_DIR}/stage/lib)
   file(GLOB TORCH_DLLS "${TORCH_INSTALL_PREFIX}/lib/*.dll")
   file(COPY ${TORCH_DLLS} DESTINATION ${CMAKE_BINARY_DIR})
 endif(MSVC)
@@ -75,6 +78,7 @@ endif()
 
 # utils
 add_library(utils STATIC utils/utils.cc)
+target_link_libraries(utils PUBLIC glog)
 
 # frontend
 add_library(frontend STATIC
@@ -85,15 +89,15 @@ target_link_libraries(frontend PUBLIC glog)
 
 # decoder
 add_library(decoder STATIC
-  utils/utils.cc
   decoder/ctc_prefix_beam_search.cc
   decoder/torch_asr_decoder.cc
   decoder/torch_asr_model.cc
+  utils/utils.cc
 )
 target_link_libraries(decoder PUBLIC glog ${TORCH_LIBRARIES})
 
 add_executable(ctc_prefix_beam_search_test decoder/ctc_prefix_beam_search_test.cc)
-target_link_libraries(ctc_prefix_beam_search_test PUBLIC glog gtest_main decoder utils)
+target_link_libraries(ctc_prefix_beam_search_test PUBLIC gtest_main decoder gmock)
 add_test(CTC_PREFIX_BEAM_SEARCH_TEST ctc_prefix_beam_search_test)
 
 # websocket

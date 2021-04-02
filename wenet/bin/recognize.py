@@ -1,4 +1,4 @@
-# Copyright (c) 2020 Mobvoi Inc. (authors: Binbin Zhang, Xiaoyu Chen)
+# Copyright (c) 2020 Mobvoi Inc. (authors: Binbin Zhang, Xiaoyu Chen, Di Wu)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -90,7 +90,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     with open(args.config, 'r') as fin:
-        configs = yaml.load(fin)
+        configs = yaml.load(fin, Loader=yaml.FullLoader)
 
     raw_wav = configs['raw_wav']
     # Init dataset and data loader
@@ -120,7 +120,7 @@ if __name__ == '__main__':
 
     # Load dict
     char_dict = {}
-    with open(args.dict, 'r', encoding='utf-8') as fin:
+    with open(args.dict, 'r') as fin:
         for line in fin:
             arr = line.strip().split()
             assert len(arr) == 2
@@ -133,7 +133,7 @@ if __name__ == '__main__':
     model = model.to(device)
 
     model.eval()
-    with torch.no_grad(), open(args.result_file, 'w', encoding='utf-8') as fout:
+    with torch.no_grad(), open(args.result_file, 'w') as fout:
         for batch_idx, batch in enumerate(test_data_loader):
             keys, feats, target, feats_lengths, target_lengths = batch
             feats = feats.to(device)

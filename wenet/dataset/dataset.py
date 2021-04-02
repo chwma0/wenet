@@ -1,4 +1,5 @@
 # Copyright (c) 2020 Mobvoi Inc. (authors: Binbin Zhang, Chao Yang)
+# Copyright (c) 2021 Jinsong Pan
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +23,7 @@ import numpy as np
 import torch
 import torchaudio
 import torchaudio.compliance.kaldi as kaldi
+import torchaudio.sox_effects as sox_effects
 import yaml
 from PIL import Image
 from PIL.Image import BICUBIC
@@ -31,6 +33,8 @@ from torch.utils.data import Dataset, DataLoader
 import wenet.dataset.kaldi_io as kaldi_io
 from wenet.dataset.wav_distortion import distort_wav_conf
 from wenet.utils.common import IGNORE_ID
+torchaudio.set_audio_backend("sox")
+
 
 def _spec_augmentation(x,
                        warp_for_time=False,
@@ -144,14 +148,28 @@ def _load_wav_with_speed(wav_file, speed):
         return torchaudio.load_wav(wav_file)
     else:
         si, _ = torchaudio.info(wav_file)
-        E = torchaudio.sox_effects.SoxEffectsChain()
-        E.append_effect_to_chain('speed', speed)
-        E.append_effect_to_chain("rate", si.rate)
-        E.set_input_file(wav_file)
-        wav, sr = E.sox_build_flow_effects()
+
+        # get torchaudio version
+        ta_no = torchaudio.__version__.split(".")
+        ta_version = 100 * int(ta_no[0]) + 10 * int(ta_no[1]) + int(ta_no[2])
+
+        if ta_version < 80:
+            # Note: deprecated in torchaudio>=0.8.0
+            E = sox_effects.SoxEffectsChain()
+            E.append_effect_to_chain('speed', speed)
+            E.append_effect_to_chain("rate", si.rate)
+            E.set_input_file(wav_file)
+            wav, sr = E.sox_build_flow_effects()
+        else:
+            # Note: enable in torchaudio>=0.8.0
+            wav, sr = sox_effects.apply_effects_file(wav_file,
+                                                     [['speed', str(speed)],
+                                                      ['rate', str(si.rate)]])
+
         # sox will normalize the waveform, scale to [-32768, 32767]
         wav = wav * (1 << 15)
         return wav, sr
+
 
 def _extract_feature(batch, speed_perturb, wav_distortion_conf,
                      feature_extraction_conf):
@@ -339,6 +357,8 @@ class AudioDataset(Dataset):
                  data_file,
                  max_length=10240,
                  min_length=0,
+                 token_max_length=200,
+                 token_min_length=1,
                  batch_type='static',
                  batch_size=1,
                  max_frames_in_batch=0,
@@ -359,6 +379,9 @@ class AudioDataset(Dataset):
                     token_shape: M,N    # M is the number of token, N is vocab size
             max_length: drop utterance which is greater than max_length(10ms)
             min_length: drop utterance which is less than min_length(10ms)
+            token_max_length: drop utterance which is greater than token_max_length,
+                especially when use char unit for english modeling
+            token_min_length: drop utterance which is less than token_max_length
             batch_type: static or dynamic, see max_frames_in_batch(dynamic)
             batch_size: number of utterances in a batch,
                it's for static batch size.
@@ -403,9 +426,14 @@ class AudioDataset(Dataset):
         valid_data = []
         for i in range(len(data)):
             length = data[i][2]
+            token_length = len(data[i][3].split())
+            # remove too lang or too short utt for both input and output
+            # to prevent from out of memory
             if length > max_length or length < min_length:
                 # logging.warn('ignore utterance {} feature {}'.format(
                 #     data[i][0], length))
+                pass
+            elif token_length > token_max_length or token_length < token_min_length:
                 pass
             else:
                 valid_data.append(data[i])
@@ -448,7 +476,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     with open(args.config_file, 'r') as fin:
-        configs = yaml.load(fin)
+        configs = yaml.load(fin, Loader=yaml.FullLoader)
 
     # Init dataset and data loader
     collate_conf = copy.copy(configs['collate_conf'])
