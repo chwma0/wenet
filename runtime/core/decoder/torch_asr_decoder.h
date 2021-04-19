@@ -9,11 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include "fst/symbol-table.h"
 #include "torch/script.h"
 #include "torch/torch.h"
 
+#include "decoder/ctc_endpoint.h"
 #include "decoder/ctc_prefix_beam_search.h"
-#include "decoder/symbol_table.h"
 #include "decoder/torch_asr_model.h"
 #include "frontend/feature_pipeline.h"
 #include "utils/utils.h"
@@ -25,6 +26,7 @@ using TorchModule = torch::jit::script::Module;
 struct DecodeOptions {
   int chunk_size = 16;
   int num_left_chunks = -1;
+  CtcEndpointConfig ctc_endpoint_config;
   CtcPrefixBeamSearchOptions ctc_search_opts;
 };
 
@@ -47,30 +49,50 @@ struct DecodeResult {
   }
 };
 
+enum DecodeState {
+  kEndBatch = 0x00,  // End of current decoding batch, normal case
+  kEndpoint = 0x01,  // Endpoint is detected
+  kEndFeats = 0x02   // All feature is decoded
+};
+
 // Torch ASR decoder
 class TorchAsrDecoder {
  public:
   TorchAsrDecoder(std::shared_ptr<FeaturePipeline> feature_pipeline,
                   std::shared_ptr<TorchAsrModel> model,
-                  const SymbolTable& symbol_table, const DecodeOptions& opts);
+                  std::shared_ptr<fst::SymbolTable> symbol_table,
+                  const DecodeOptions& opts);
 
-  // Return true if all feature has been decoded, else return false
-  bool Decode();
+  DecodeState Decode();
+  void Rescoring();
   void Reset();
+  void ResetContinuousDecoding();
+  bool DecodedSomething() const {
+    return !result_.empty() && !result_[0].sentence.empty();
+  }
   int num_frames_in_current_chunk() const {
     return num_frames_in_current_chunk_;
+  }
+  int frame_shift_in_ms() const {
+    return model_->subsampling_rate() *
+           feature_pipeline_->config().frame_shift * 1000 /
+           feature_pipeline_->config().sample_rate;
+  }
+  int feature_frame_shift_in_ms() const {
+    return feature_pipeline_->config().frame_shift * 1000 /
+           feature_pipeline_->config().sample_rate;
   }
   const std::vector<DecodeResult>& result() const { return result_; }
 
  private:
   // Return true if we reach the end of the feature pipeline
-  bool AdvanceDecoding();
+  DecodeState AdvanceDecoding();
   void AttentionRescoring();
-  void UpdateResult();
+  void UpdateResult(const torch::Tensor& ctc_log_probs);
 
   std::shared_ptr<FeaturePipeline> feature_pipeline_;
   std::shared_ptr<TorchAsrModel> model_;
-  const SymbolTable& symbol_table_;
+  std::shared_ptr<fst::SymbolTable> symbol_table_;
   const DecodeOptions& opts_;
   // cache feature
   std::vector<std::vector<float>> cached_feature_;
@@ -82,14 +104,18 @@ class TorchAsrDecoder {
   torch::jit::IValue conformer_cnn_cache_;
   std::vector<torch::Tensor> encoder_outs_;
   int offset_ = 0;  // offset
+  // For continuous decoding
+  int num_frames_ = 0;
+  int global_frame_offset_ = 0;
 
   std::unique_ptr<CtcPrefixBeamSearch> ctc_prefix_beam_searcher_;
+  std::unique_ptr<CtcEndpoint> ctc_endpointer_;
 
-  int num_frames_in_current_chunk_;
+  int num_frames_in_current_chunk_ = 0;
   std::vector<DecodeResult> result_;
 
  public:
-  DISALLOW_COPY_AND_ASSIGN(TorchAsrDecoder);
+  WENET_DISALLOW_COPY_AND_ASSIGN(TorchAsrDecoder);
 };
 
 }  // namespace wenet

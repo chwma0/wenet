@@ -68,7 +68,7 @@ class CtcPrefixBeamSearch {
   const std::vector<std::vector<int>>& times() const { return times_; }
 
  private:
-  int abs_time_step_;
+  int abs_time_step_ = 0;
   std::unordered_map<std::vector<int>, PrefixScore, PrefixHash> cur_hyps_;
 
   // Nbest list and corresponding likelihood_, in sorted order
@@ -80,7 +80,7 @@ class CtcPrefixBeamSearch {
   const CtcPrefixBeamSearchOptions& opts_;
 
  public:
-  DISALLOW_COPY_AND_ASSIGN(CtcPrefixBeamSearch);
+  WENET_DISALLOW_COPY_AND_ASSIGN(CtcPrefixBeamSearch);
 };
 
 }  // namespace wenet
