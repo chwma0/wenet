@@ -23,10 +23,16 @@ class CTC(torch.nn.Module):
         super().__init__()
         eprojs = encoder_output_size
         self.dropout_rate = dropout_rate
-        self.ctc_lo = torch.nn.Linear(eprojs, odim)
+        self.ppg_dim = 512
+        self.ppg = torch.nn.Linear(eprojs, self.ppg_dim)
+        self.ctc_lo = torch.nn.Linear(self.ppg_dim, odim)
+        self.ppg_feats = torch.randn(1,1)
 
         reduction_type = "sum" if reduce else "none"
         self.ctc_loss = torch.nn.CTCLoss(reduction=reduction_type)
+
+    def ppg_feats(self):
+        return self.ppg_feats
 
     def forward(self, hs_pad: torch.Tensor, hlens: torch.Tensor,
                 ys_pad: torch.Tensor, ys_lens: torch.Tensor) -> torch.Tensor:
@@ -38,8 +44,12 @@ class CTC(torch.nn.Module):
             ys_pad: batch of padded character id sequence tensor (B, Lmax)
             ys_lens: batch of lengths of character sequence (B)
         """
+
         # hs_pad: (B, L, NProj) -> ys_hat: (B, L, Nvocab)
-        ys_hat = self.ctc_lo(F.dropout(hs_pad, p=self.dropout_rate))
+        ys_hat = self.ppg(F.dropout(hs_pad, p=self.dropout_rate))
+        self.ppg_feats = ys_hat
+        ys_hat = self.ctc_lo(ys_hat)
+
         # ys_hat: (B, L, D) -> (L, B, D)
         ys_hat = ys_hat.transpose(0, 1)
         ys_hat = ys_hat.log_softmax(2)
@@ -56,6 +66,8 @@ class CTC(torch.nn.Module):
         Returns:
             torch.Tensor: log softmax applied 3d tensor (B, Tmax, odim)
         """
+        hs_pad = self.ppg(hs_pad)
+        self.ppg_feats = hs_pad
         return F.log_softmax(self.ctc_lo(hs_pad), dim=2)
 
     def argmax(self, hs_pad: torch.Tensor) -> torch.Tensor:

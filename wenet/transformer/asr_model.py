@@ -65,6 +65,9 @@ class ASRModel(torch.nn.Module):
             normalize_length=length_normalized_loss,
         )
 
+    def ppg_feats(self):
+        return self.ctc.ppg_feats
+
     def forward(
         self,
         speech: torch.Tensor,
