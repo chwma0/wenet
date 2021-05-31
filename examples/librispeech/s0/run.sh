@@ -6,24 +6,31 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+#export NCCL_P2P_DISABLE=1
+export NCCL_SOCKET_IFNAME=bond0.509
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
 stage=0 # start from 0 if you need to start from data preparation
 stop_stage=5
+
+# ddp
+num_nodes=4
+node_rank=0
+
 # data
 data_url=www.openslr.org/resources/12
 # use your own data path
-datadir=/nfsa/diwu/open-dir
+datadir=/mnt/asr/enu
 # wav data dir
 wave_data=data
 nj=16
 # Optional train_config
 # 1. conf/train_transformer_large.yaml: Standard transformer
-train_config=conf/train_conformer.yaml
+train_config=conf/train_unified_conformer.yaml
 checkpoint=
 cmvn=true
 do_delta=false
 
-dir=exp/sp_spec_aug
+dir=exp/unified_conformer
 
 # use average_checkpoint will get better result
 average_checkpoint=true
@@ -42,9 +49,8 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_960
-train_dev=dev
-recog_set="test_clean test_other dev_clean dev_other"
+train_set=train
+recog_set="test_clean test_other test"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
@@ -88,7 +94,6 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 
 fi
 
-
 dict=$wave_data/lang_char/${train_set}_${bpemode}${nbpe}_units.txt
 bpemodel=$wave_data/lang_char/${train_set}_${bpemode}${nbpe}
 echo "dictionary: ${dict}"
@@ -114,7 +119,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "Prepare data, prepare requried format"
     for x in dev ${recog_set} $train_set ; do
         tools/format_data.sh --nj ${nj} \
-            --feat-type flac --feat $wave_data/$x/wav.scp --bpecode ${bpemodel}.model \
+            --feat-type wav --feat $wave_data/$x/wav.scp --bpecode ${bpemodel}.model \
             $wave_data/$x ${dict} > $wave_data/$x/format.data.tmp
 
         tools/remove_longshortdata.py \
@@ -134,12 +139,14 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     mkdir -p $dir
     INIT_FILE=$dir/ddp_init
     rm -f $INIT_FILE # delete old one before starting
-    init_method=file://$(readlink -f $INIT_FILE)
+    init_method='tcp://169.136.190.236:23456'
     echo "$0: init method is $init_method"
     num_gpus=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
+    world_size=`expr $num_gpus \* $num_nodes`
+    echo "total gpus is: $world_size"
+    cmvn_opts=
     # Use "nccl" if it works, otherwise use "gloo"
     dist_backend="nccl"
-    cmvn_opts=
     $cmvn && cmvn_opts="--cmvn $wave_data/${train_set}/global_cmvn"
     # train.py will write $train_config to $dir/train.yaml with model input
     # and output dimension, train.yaml will be used for inference or model
@@ -147,6 +154,8 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     for ((i = 0; i < $num_gpus; ++i)); do
     {
         gpu_id=$(echo $CUDA_VISIBLE_DEVICES | cut -d',' -f$[$i+1])
+        rank=`expr $node_rank \* $num_gpus + $i`
+        echo "i=$i, gpu_id=$gpu_id, rank=$rank"
         python wenet/bin/train.py --gpu $gpu_id \
             --config $train_config \
             --train_data $wave_data/$train_set/format.data \
@@ -154,10 +163,10 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             ${checkpoint:+--checkpoint $checkpoint} \
             --model_dir $dir \
             --ddp.init_method $init_method \
-            --ddp.world_size $num_gpus \
-            --ddp.rank $i \
+            --ddp.world_size $world_size \
+            --ddp.rank $rank \
             --ddp.dist_backend $dist_backend \
-            --num_workers 1 \
+            --num_workers 10 \
             $cmvn_opts \
             --pin_memory
     } &
@@ -182,7 +191,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     fi
     # Specify decoding_chunk_size if it's a unified dynamic chunk trained model
     # -1 for full chunk
-    decoding_chunk_size=
+    decoding_chunk_size=16
     ctc_weight=0.5
     # Polling GPU id begin with index 0
     num_gpus=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
