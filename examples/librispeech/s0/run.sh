@@ -13,7 +13,7 @@ stage=0 # start from 0 if you need to start from data preparation
 stop_stage=5
 
 # ddp
-num_nodes=4
+num_nodes=5
 node_rank=0
 
 # data
@@ -70,23 +70,23 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
 fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
-    ### Task dependent. You have to design training and dev sets by yourself.
-    ### But you can utilize Kaldi recipes in most cases
-    echo "stage 1: Feature Generation"
-    mkdir -p $wave_data/train_960
-    # merge total training data
-    for set in train_clean_100 train_clean_360 train_other_500; do
-        for f in `ls $wave_data/$set`; do
-            cat $wave_data/$set/$f >> $wave_data/train_960/$f
-        done
-    done
-    mkdir -p $wave_data/dev
-    # merge total dev data
-    for set in dev_clean dev_other; do
-        for f in `ls $wave_data/$set`; do
-            cat $wave_data/$set/$f >> $wave_data/dev/$f
-        done
-    done
+    #### Task dependent. You have to design training and dev sets by yourself.
+    #### But you can utilize Kaldi recipes in most cases
+    #echo "stage 1: Feature Generation"
+    #mkdir -p $wave_data/train_960
+    ## merge total training data
+    #for set in train_clean_100 train_clean_360 train_other_500; do
+    #    for f in `ls $wave_data/$set`; do
+    #        cat $wave_data/$set/$f >> $wave_data/train_960/$f
+    #    done
+    #done
+    #mkdir -p $wave_data/dev
+    ## merge total dev data
+    #for set in dev_clean dev_other; do
+    #    for f in `ls $wave_data/$set`; do
+    #        cat $wave_data/$set/$f >> $wave_data/dev/$f
+    #    done
+    #done
 
     tools/compute_cmvn_stats.py --num_workers 16 --train_config $train_config \
         --in_scp $wave_data/$train_set/wav.scp \
@@ -139,7 +139,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     mkdir -p $dir
     INIT_FILE=$dir/ddp_init
     rm -f $INIT_FILE # delete old one before starting
-    init_method='tcp://169.136.190.236:23456'
+    init_method='tcp://169.136.190.235:23456'
     echo "$0: init method is $init_method"
     num_gpus=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
     world_size=`expr $num_gpus \* $num_nodes`
