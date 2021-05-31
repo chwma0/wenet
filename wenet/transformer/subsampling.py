@@ -82,19 +82,19 @@ class Conv2dSubsampling4(BaseSubsampling):
         """Construct an Conv2dSubsampling4 object."""
         super().__init__()
         self.conv = torch.nn.Sequential(
-            torch.nn.Conv2d(1, odim, 3, 2),
+            torch.nn.Conv2d(1, odim, 1, 1),
             torch.nn.ReLU(),
-            torch.nn.Conv2d(odim, odim, 3, 2),
+            torch.nn.Conv2d(odim, odim, 1, 1),
             torch.nn.ReLU(),
         )
         self.out = torch.nn.Sequential(
-            torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+            torch.nn.Linear(odim * idim, odim))
         self.pos_enc = pos_enc_class
         # The right context for every conv layer is computed by:
         # (kernel_size - 1) / 2 * stride  * frame_rate_of_this_layer
-        self.subsampling_rate = 4
+        self.subsampling_rate = 1
         # 6 = (3 - 1) / 2 * 2 * 1 + (3 - 1) / 2 * 2 * 2
-        self.right_context = 6
+        self.right_context = 0
 
     def forward(
             self,
@@ -121,7 +121,7 @@ class Conv2dSubsampling4(BaseSubsampling):
         b, c, t, f = x.size()
         x = self.out(x.transpose(1, 2).contiguous().view(b, t, c * f))
         x, pos_emb = self.pos_enc(x, offset)
-        return x, pos_emb, x_mask[:, :, :-2:2][:, :, :-2:2]
+        return x, pos_emb, x_mask
 
 
 class Conv2dSubsampling6(BaseSubsampling):
